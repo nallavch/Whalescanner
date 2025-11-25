@@ -1,0 +1,100 @@
+#root {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 2rem;
+  text-align: center;
+}
+
+.logo {
+  height: 6em;
+  padding: 1.5em;
+  will-change: filter;
+  transition: filter 300ms;
+}
+.logo:hover {
+  filter: drop-shadow(0 0 2em #646cffaa);
+}
+.logo.react:hover {
+  filter: drop-shadow(0 0 2em #61dafbaa);
+}
+
+@keyframes logo-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  a:nth-of-type(2) .logo {
+    animation: logo-spin infinite 20s linear;
+  }
+}
+
+.card {
+  padding: 2em;
+}
+
+.read-the-docs {
+  color: #888;
+}
+.summary-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.summary-tile {
+  background: #020617;
+  border-radius: 12px;
+  padding: 10px 12px;
+  border: 1px solid #1f2937;
+}
+
+.summary-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #9ca3af;
+}
+
+.summary-value {
+  margin-top: 4px;
+  font-size: 16px;
+  font-weight: 600;
+  color: #e5e7eb;
+}
+.nested-table-wrapper {
+  margin-top: 6px;
+  background: #020617;
+  border-radius: 10px;
+  padding: 8px;
+  border: 1px solid #1f2937;
+}
+
+.nested-table-title {
+  font-size: 11px;
+  color: #9ca3af;
+  margin-bottom: 4px;
+}
+
+.nested-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.nested-table th,
+.nested-table td {
+  padding: 3px 6px;
+  border-bottom: 1px solid #111827;
+}
+
+.nested-more-note {
+  margin-top: 4px;
+  font-size: 10px;
+  color: #6b7280;
+}
