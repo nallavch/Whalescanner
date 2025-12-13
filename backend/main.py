@@ -1,9 +1,10 @@
 from fastapi import FastAPI, Query
+from pydantic import BaseModel, Field
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional, List
 from datetime import datetime, timedelta
 
-from flow_scanner import FlowScanner  # your class-based scanner
+from flow_scanner import FlowScanner, get_cache_key, load_cache, save_cache  # your class-based scanner
 
 app = FastAPI(title="Flow Scanner API")
 
@@ -22,6 +23,31 @@ def daterange(start_date, end_date):
     while current <= end_date:
         yield current
         current += timedelta(days=1)
+
+
+class DistanceCriteria(BaseModel):
+    sma50: Optional[float] = Field(None, description="Max % distance from SMA50")
+    sma150: Optional[float] = Field(None, description="Max % distance from SMA150")
+    sma200: Optional[float] = Field(None, description="Max % distance from SMA200")
+
+
+class ScreenerCriteria(BaseModel):
+    require_sma50_above_200: bool = Field(False, description="SMA50 above SMA200")
+    require_sma150_above_200: bool = Field(False, description="SMA150 above SMA200")
+    min_relative_volume: Optional[float] = Field(
+        None, description="Minimum relative volume vs 20-day average"
+    )
+    max_distance_percent: DistanceCriteria = Field(
+        default_factory=DistanceCriteria,
+        description="Max percentage distance from selected SMAs",
+    )
+
+
+class ScreenerRequest(BaseModel):
+    tickers: List[str]
+    source: str = Field("alpaca", pattern="^(alpaca|polygon)$")
+    days_history: int = 250
+    criteria: ScreenerCriteria = Field(default_factory=ScreenerCriteria)
 
 
 @app.get("/api/scan/day")
@@ -193,4 +219,139 @@ def scan_range(
         "start_date": start_date,
         "end_date": end_date,
         "days": day_summaries,
+    }
+
+
+def _compute_sma(closes: List[float], period: int) -> Optional[float]:
+    if len(closes) < period:
+        return None
+    return sum(closes[-period:]) / period
+
+
+def _compute_relative_volume(volumes: List[float], window: int = 20) -> Optional[float]:
+    if len(volumes) < window or window <= 0:
+        return None
+    recent = volumes[-1]
+    base = volumes[-window:]
+    avg = sum(base) / len(base)
+    if avg == 0:
+        return None
+    return recent / avg
+
+
+def _distance_pct(close: Optional[float], sma: Optional[float]) -> Optional[float]:
+    if close is None or sma is None or sma == 0:
+        return None
+    return abs(close - sma) * 100.0 / sma
+
+
+@app.post("/api/scan/screener")
+def screen_watchlist(req: ScreenerRequest):
+    """Lightweight screener that tags tickers for a watchlist based on SMA/volume filters."""
+
+    scanner = FlowScanner(source=req.source)
+    provider = scanner.provider
+
+    end_date = datetime.utcnow().date()
+    start_date = end_date - timedelta(days=req.days_history)
+
+    matches = []
+
+    for raw_ticker in req.tickers:
+        ticker = raw_ticker.strip().upper()
+        if not ticker:
+            continue
+
+        hist_key = get_cache_key(
+            "screener_daily",
+            ticker=ticker,
+            start=start_date.isoformat(),
+            end=end_date.isoformat(),
+            source=req.source,
+        )
+
+        daily_bars = load_cache(hist_key)
+        if not daily_bars:
+            daily_bars = provider.fetch_daily_bars(
+                ticker,
+                start_date.strftime("%Y-%m-%d"),
+                end_date.strftime("%Y-%m-%d"),
+                verbose=False,
+            )
+            if daily_bars:
+                save_cache(hist_key, daily_bars)
+
+        if not daily_bars:
+            matches.append(
+                {
+                    "ticker": ticker,
+                    "passed": False,
+                    "reasons": ["No daily data available"],
+                }
+            )
+            continue
+
+        closes = [b.get("close") for b in daily_bars if b.get("close") is not None]
+        volumes = [b.get("volume") for b in daily_bars if b.get("volume") is not None]
+
+        close = closes[-1] if closes else None
+
+        sma50 = _compute_sma(closes, 50)
+        sma150 = _compute_sma(closes, 150)
+        sma200 = _compute_sma(closes, 200)
+        rel_vol = _compute_relative_volume(volumes)
+
+        dist50 = _distance_pct(close, sma50)
+        dist150 = _distance_pct(close, sma150)
+        dist200 = _distance_pct(close, sma200)
+
+        passed = True
+        reasons: List[str] = []
+
+        if req.criteria.require_sma50_above_200 and not (sma50 and sma200 and sma50 > sma200):
+            passed = False
+            reasons.append("SMA50 is not above SMA200")
+
+        if req.criteria.require_sma150_above_200 and not (sma150 and sma200 and sma150 > sma200):
+            passed = False
+            reasons.append("SMA150 is not above SMA200")
+
+        if req.criteria.min_relative_volume is not None:
+            if rel_vol is None or rel_vol < req.criteria.min_relative_volume:
+                passed = False
+                reasons.append("Relative volume below threshold")
+
+        dist_cfg = req.criteria.max_distance_percent
+        if dist_cfg.sma50 is not None and (dist50 is None or dist50 > dist_cfg.sma50):
+            passed = False
+            reasons.append("Price too far from SMA50")
+
+        if dist_cfg.sma150 is not None and (dist150 is None or dist150 > dist_cfg.sma150):
+            passed = False
+            reasons.append("Price too far from SMA150")
+
+        if dist_cfg.sma200 is not None and (dist200 is None or dist200 > dist_cfg.sma200):
+            passed = False
+            reasons.append("Price too far from SMA200")
+
+        matches.append(
+            {
+                "ticker": ticker,
+                "close": close,
+                "sma50": sma50,
+                "sma150": sma150,
+                "sma200": sma200,
+                "relative_volume": rel_vol,
+                "distance_pct": {"sma50": dist50, "sma150": dist150, "sma200": dist200},
+                "passed": passed,
+                "reasons": reasons,
+            }
+        )
+
+    passed = [m for m in matches if m.get("passed")]
+    return {
+        "source": req.source,
+        "criteria": req.criteria.model_dump(),
+        "matches": matches,
+        "passed": passed,
     }
