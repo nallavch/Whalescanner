@@ -3,7 +3,7 @@ import type { FC } from "react";
 import "./App.css";
 
 // ========== API Configuration ==========
-const API_BASE = "http://localhost:8000";
+const API_BASE = import.meta.env.VITE_API_BASE ?? "http://localhost:8000";
 
 // ========== API Error Handling ==========
 class APIError extends Error {
@@ -62,6 +62,15 @@ const API = {
       block_size: String(params.blockSize),
     });
     const res = await fetch(`${API_BASE}/api/scan/range?${query.toString()}`);
+    return await handleResponse(res);
+  },
+
+  fetchScreener: async (payload: any) => {
+    const res = await fetch(`${API_BASE}/api/scan/screener`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
     return await handleResponse(res);
   }
 };
@@ -609,12 +618,22 @@ function App() {
 
   const [dayResult, setDayResult] = useState<any | null>(null);
   const [rangeResult, setRangeResult] = useState<any | null>(null);
+  const [screenerResult, setScreenerResult] = useState<any | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
   const [startTime, setStartTime] = useState("09:30");
   const [endTime, setEndTime] = useState("16:00");
   const [autoRefresh, setAutoRefresh] = useState(false);
+
+  const [watchlistInput, setWatchlistInput] = useState("AAPL,MSFT,NVDA,TSLA");
+  const [sma50Above200, setSma50Above200] = useState(true);
+  const [sma150Above200, setSma150Above200] = useState(true);
+  const [minRelativeVolume, setMinRelativeVolume] = useState<number | "">(1.5);
+  const [distance50, setDistance50] = useState<number | "">(5);
+  const [distance150, setDistance150] = useState<number | "">(8);
+  const [distance200, setDistance200] = useState<number | "">(10);
+  const [showOnlyPassing, setShowOnlyPassing] = useState(true);
 
   const runDayScan = useCallback(async () => {
     try {
@@ -658,6 +677,43 @@ function App() {
     }
   }, [ticker, startDate, endDate, source, blockSize]);
 
+  const runScreener = useCallback(async () => {
+    const tickers = watchlistInput
+      .split(/[\s,\n]+/)
+      .map(t => t.trim().toUpperCase())
+      .filter(Boolean);
+
+    if (tickers.length === 0) {
+      setError("Please provide at least one ticker for the screener.");
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setError(null);
+      const res = await API.fetchScreener({
+        tickers,
+        source,
+        criteria: {
+          require_sma50_above_200: sma50Above200,
+          require_sma150_above_200: sma150Above200,
+          min_relative_volume: minRelativeVolume === "" ? null : Number(minRelativeVolume),
+          max_distance_percent: {
+            sma50: distance50 === "" ? null : Number(distance50),
+            sma150: distance150 === "" ? null : Number(distance150),
+            sma200: distance200 === "" ? null : Number(distance200)
+          }
+        }
+      });
+      setScreenerResult(res);
+    } catch (e: any) {
+      setError(e.message);
+      setScreenerResult(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [watchlistInput, source, sma50Above200, sma150Above200, minRelativeVolume, distance50, distance150, distance200]);
+
   useEffect(() => {
     let interval: any;
     if (autoRefresh && activeTab === "day") {
@@ -676,6 +732,11 @@ function App() {
       timeframe === "1h" ? dayResult.timeframe_bias["1h"] :
         dayResult.timeframe_bias["1h"] ?? dayResult.timeframe_bias["4h"];
   }, [dayResult, timeframe]);
+
+  const screenerRows = useMemo(() => {
+    if (!screenerResult) return [];
+    return (showOnlyPassing ? screenerResult.passed : screenerResult.matches) ?? [];
+  }, [screenerResult, showOnlyPassing]);
 
   return (
     <div className="app-container">
@@ -718,6 +779,12 @@ function App() {
           >
             Range
           </button>
+          <button
+            onClick={() => setActiveTab("screener")}
+            style={{ flex: 1, padding: "8px", background: activeTab === "screener" ? "#22c55e" : "#334155", border: "none", borderRadius: 6, color: activeTab === "screener" ? "#0f172a" : "#e5e7eb", cursor: "pointer", fontSize: 12, fontWeight: 600 }}
+          >
+            Screener
+          </button>
         </div>
 
         {activeTab === "day" && (
@@ -757,6 +824,74 @@ function App() {
             </div>
             <button className="run-btn" onClick={runRangeScan} disabled={loading}>
               {loading ? "Scanning..." : "Run Range Scan"}
+            </button>
+          </>
+        )}
+
+        {activeTab === "screener" && (
+          <>
+            <div className="control-group" style={{ marginTop: 12 }}>
+              <label>Watchlist (comma or newline separated)</label>
+              <textarea
+                value={watchlistInput}
+                onChange={e => setWatchlistInput(e.target.value)}
+                rows={4}
+                style={{ background: "#0f172a", border: "1px solid #334155", color: "#f1f5f9", padding: 10, borderRadius: 6 }}
+              />
+            </div>
+
+            <div className="toggle-group" style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+              <label style={{ fontSize: 12, color: "#9ca3af", display: "flex", alignItems: "center", gap: 8 }}>
+                <input type="checkbox" checked={sma50Above200} onChange={e => setSma50Above200(e.target.checked)} />
+                SMA50 &gt; SMA200
+              </label>
+              <label style={{ fontSize: 12, color: "#9ca3af", display: "flex", alignItems: "center", gap: 8 }}>
+                <input type="checkbox" checked={sma150Above200} onChange={e => setSma150Above200(e.target.checked)} />
+                SMA150 &gt; SMA200
+              </label>
+              <label style={{ fontSize: 12, color: "#9ca3af", display: "flex", alignItems: "center", gap: 8 }}>
+                <input type="checkbox" checked={showOnlyPassing} onChange={e => setShowOnlyPassing(e.target.checked)} />
+                Show passing tickers only
+              </label>
+            </div>
+
+            <div className="control-group" style={{ marginTop: 12 }}>
+              <label>Min Relative Volume (vs 20D)</label>
+              <input
+                type="number"
+                step="0.1"
+                value={minRelativeVolume}
+                onChange={e => setMinRelativeVolume(e.target.value === "" ? "" : Number(e.target.value))}
+                placeholder="e.g. 1.5"
+              />
+            </div>
+
+            <div className="control-group">
+              <label>Max Distance from SMAs (%)</label>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
+                <input
+                  type="number"
+                  value={distance50}
+                  onChange={e => setDistance50(e.target.value === "" ? "" : Number(e.target.value))}
+                  placeholder="SMA50"
+                />
+                <input
+                  type="number"
+                  value={distance150}
+                  onChange={e => setDistance150(e.target.value === "" ? "" : Number(e.target.value))}
+                  placeholder="SMA150"
+                />
+                <input
+                  type="number"
+                  value={distance200}
+                  onChange={e => setDistance200(e.target.value === "" ? "" : Number(e.target.value))}
+                  placeholder="SMA200"
+                />
+              </div>
+            </div>
+
+            <button className="run-btn" onClick={runScreener} disabled={loading}>
+              {loading ? "Scanning..." : "Run Screener"}
             </button>
           </>
         )}
@@ -939,7 +1074,58 @@ function App() {
           </div>
         )}
 
-        {!loading && !error && !dayResult && !rangeResult && (
+        {activeTab === "screener" && screenerResult && (
+          <div className="card" style={{ overflowX: "auto" }}>
+            <h3>Watchlist Screener ({screenerRows.length} tickers)</h3>
+            <p style={{ color: "#9ca3af", marginTop: -8 }}>
+              Showing {showOnlyPassing ? "only passing filters" : "all evaluated"} • Source: {screenerResult.source}
+            </p>
+            {screenerRows.length === 0 ? (
+              <div style={{ padding: 12, color: "#94a3af" }}>No tickers matched the filters.</div>
+            ) : (
+              <table>
+                <thead>
+                  <tr>
+                    <th>Ticker</th>
+                    <th>Close</th>
+                    <th>SMA50</th>
+                    <th>SMA150</th>
+                    <th>SMA200</th>
+                    <th>Rel Vol</th>
+                    <th>Dist 50</th>
+                    <th>Dist 150</th>
+                    <th>Dist 200</th>
+                    <th>Status</th>
+                    <th>Notes</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {screenerRows.map((row: any) => (
+                    <tr key={row.ticker}>
+                      <td style={{ fontWeight: 700 }}>{row.ticker}</td>
+                      <td>{formatPrice(row.close)}</td>
+                      <td>{formatPrice(row.sma50)}</td>
+                      <td>{formatPrice(row.sma150)}</td>
+                      <td>{formatPrice(row.sma200)}</td>
+                      <td>{row.relative_volume ? row.relative_volume.toFixed(2) : "-"}</td>
+                      <td>{row.distance_pct?.sma50 != null ? `${row.distance_pct.sma50.toFixed(1)}%` : "-"}</td>
+                      <td>{row.distance_pct?.sma150 != null ? `${row.distance_pct.sma150.toFixed(1)}%` : "-"}</td>
+                      <td>{row.distance_pct?.sma200 != null ? `${row.distance_pct.sma200.toFixed(1)}%` : "-"}</td>
+                      <td style={{ color: row.passed ? "#22c55e" : "#ef4444", fontWeight: 700 }}>
+                        {row.passed ? "PASS" : "FILTERED"}
+                      </td>
+                      <td style={{ color: "#cbd5e1", fontSize: 12 }}>
+                        {row.reasons?.length ? row.reasons.join(", ") : "Meets criteria"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        )}
+
+        {!loading && !error && !dayResult && !rangeResult && !screenerResult && (
           <div className="empty-state">
             <div style={{ fontSize: 48, marginBottom: 16 }}>🐋</div>
             <p>Run a scan to analyze whale flows and absorption patterns</p>
