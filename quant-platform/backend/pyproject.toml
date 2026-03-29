@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "quant-platform-backend"
+version = "0.1.0"
+description = "Phase 1 backend for config-driven quant platform"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.111.0",
+  "uvicorn[standard]>=0.30.0",
+  "pydantic>=2.7.0",
+  "pydantic-settings>=2.3.0",
+  "sqlalchemy>=2.0.30",
+  "psycopg[binary]>=3.2.0",
+  "redis>=5.0.0",
+  "pyarrow>=17.0.0",
+  "pandas>=2.2.0",
+  "httpx>=0.27.0",
+]
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = [".", "packages/core_models/src", "packages/polygon_data/src", "packages/backtesting/src", "packages/paper_simulation/src", "packages/strategies/src", "packages/persistence/src"]
+include = ["app*", "core_models*", "polygon_data*", "backtesting*", "paper_simulation*", "strategies*", "persistence*"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
